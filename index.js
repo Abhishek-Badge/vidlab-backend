@@ -31,14 +31,14 @@ const userSchema = new mongoose.Schema({
     Password: { type: String, required: true },
     Email: { type: String, required: true },
     Mobile: { type: String, required: true }
-});
+}, { collection: "tblusers" });
 const User = mongoose.model("User", userSchema);
 
 // Category Schema
 const categorySchema = new mongoose.Schema({
     CategoryId: { type: Number, unique: true },
     CategoryName: { type: String, required: true }
-});
+}, { collection: "tblcategories" });
 const Category = mongoose.model("Category", categorySchema);
 
 // Video Schema
@@ -54,7 +54,7 @@ const videoSchema = new mongoose.Schema({
     CategoryId: { type: Number },
     CategoryName: { type: String },
     ChannelName: { type: String, default: "" }
-});
+}, { collection: "tblvideos" });
 const Video = mongoose.model("Video", videoSchema);
 
 // Reaction Schema
@@ -62,7 +62,7 @@ const reactionSchema = new mongoose.Schema({
     userId: { type: Number, required: true },
     videoId: { type: Number, required: true },
     reaction: { type: String, enum: ["like", "dislike"], required: true }
-});
+}, { collection: "tblreactions" });
 // Ensure one reaction per user-video pair
 reactionSchema.index({ userId: 1, videoId: 1 }, { unique: true });
 const Reaction = mongoose.model("Reaction", reactionSchema);
