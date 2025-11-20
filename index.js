@@ -1,241 +1,252 @@
-var mongoClient = require("mongodb").MongoClient;
-var express = require("express");
-var cors = require("cors");
+require("dotenv").config();
+const express = require("express");
+const cors = require("cors");
+const mongoose = require('mongoose');
 
-var app = express();
-app.use(express.json());
+
+const app = express();
+
+// Middlewares
+app.use(express.json());  // important to parse JSON
 app.use(cors());
 app.use(express.urlencoded({ extended: true }));
 
-var connectionString = "mongodb://127.0.0.1:27017";
+// 🔹 Environment variables
+const PORT = process.env.PORT || 5050;
+const MONGO_URI = process.env.MONGO_URI;
 
 
-//  Ensure unique index for categories (runs at startup)
 
-async function ensureIndexes() {
-    const connectionObject = await mongoClient.connect(connectionString);
-    const db = connectionObject.db("vidlab");
+// 🔹connect to MongoDB Atlas connection
+mongoose.connect(MONGO_URI)
+    .then(() => console.log("MongoDB Connected Succesfully"))
+    .catch(err => console.log("MongoDB Connection Error:", err));
 
+/*======================MODELS ================================*/
+
+// User Schema
+const userSchema = new mongoose.Schema({
+    UserId: { type: Number, unique: true },
+    UserName: { type: String, required: true },
+    Password: { type: String, required: true },
+    Email: { type: String, required: true },
+    Mobile: { type: String, required: true }
+});
+const User = mongoose.model("User", userSchema);
+
+// Category Schema
+const categorySchema = new mongoose.Schema({
+    CategoryId: { type: Number, unique: true },
+    CategoryName: { type: String, required: true }
+});
+const Category = mongoose.model("Category", categorySchema);
+
+// Video Schema
+const videoSchema = new mongoose.Schema({
+    VideoId: { type: Number, unique: true },
+    Title: { type: String, required: true },
+    Url: { type: String, required: true },
+    Description: { type: String, default: "" },
+    Likes: { type: Number, default: 0 },
+    Dislikes: { type: Number, default: 0 },
+    Views: { type: Number, default: 0 },
+    Comments: { type: [String], default: [] },
+    CategoryId: { type: Number },
+    CategoryName: { type: String },
+    ChannelName: { type: String, default: "" }
+});
+const Video = mongoose.model("Video", videoSchema);
+
+// Reaction Schema
+const reactionSchema = new mongoose.Schema({
+    userId: { type: Number, required: true },
+    videoId: { type: Number, required: true },
+    reaction: { type: String, enum: ["like", "dislike"], required: true }
+});
+// Ensure one reaction per user-video pair
+reactionSchema.index({ userId: 1, videoId: 1 }, { unique: true });
+const Reaction = mongoose.model("Reaction", reactionSchema);
+
+/*================ADMIN Route ===========================*/
+
+// Admin: hardcoded single admin login (username: 'admin', password: 'admin123')
+// No schema/model needed since credentials are hardcoded.
+
+// Admin route: return hardcoded admin credentials
+app.get("/get-admin", async (req, res) => {
+    res.json({ username: "admin", password: "admin123" });
+});
+
+
+/*===================== User Routes====================*/
+
+// Register new user
+app.post("/register-user", async (req, res) => {
     try {
-        await db.collection("tblcategories").createIndex(
-            { CategoryName: 1 },
-            { unique: true, collation: { locale: "en", strength: 2 } }
-        );
-        console.log("✅ Unique index on CategoryName ensured.");
+        const { UserName, Password, Email, Mobile } = req.body;
+        if (!UserName || !Password || !Email || !Mobile) {
+            return res.status(400).json({ message: "All fields are required." });
+        }
+        // Auto-generate UserId
+        const lastUser = await User.findOne().sort({ UserId: -1 }).exec();
+        const newId = lastUser ? lastUser.UserId + 1 : 1;
+        const newUser = new User({ UserId: newId, UserName, Password, Email, Mobile });
+        await newUser.save();
+        res.status(201).json({ message: "User registered." });
     } catch (err) {
-        console.warn("⚠️ Could not create index:", err.message);
-    } finally {
-        await connectionObject.close();
+        console.error("Error registering user:", err);
+        res.status(500).json({ message: "Server error" });
     }
-}
-
-// 🔹 Call it immediately at startup
-ensureIndexes();
-
-// <============ Videos CRUD ================>//
-
-// Get all Admins
-app.get('/get-admin', (req, res) => {
-    mongoClient.connect(connectionString).then(connectionObject => {
-        var database = connectionObject.db("vidlab");
-        database.collection("tbladmin").find({}).toArray().then(documents => {
-            res.send(documents);
-            res.end();
-        });
-    });
 });
 
-// Get all Users
-app.get("/get-users", (req, res) => {
-    mongoClient.connect(connectionString).then(connectionObject => {
-        var database = connectionObject.db("vidlab");
-        database.collection("tblusers").find({}).toArray().then(documents => {
-            res.send(documents);
-            res.end();
-        });
-    });
-});
-
-// Get all Categories
-app.get("/get-categories", (req, res) => {
-    mongoClient.connect(connectionString).then(connectionObject => {
-        var database = connectionObject.db("vidlab");
-        database.collection("tblcategories").find({}).toArray().then(documents => {
-            res.send(documents);
-            res.end();
-        });
-    });
-});
-
-// Get all Videos
-app.get("/get-videos", (req, res) => {
-    mongoClient.connect(connectionString).then(connectionObject => {
-        var database = connectionObject.db("vidlab");
-        database.collection("tblvideos").find({}).toArray().then(documents => {
-            res.send(documents);
-            res.end();
-        });
-    });
-});
-
-// Get Video Based on User ID
-app.get("/get-users/:userid", (req, res) => {
-    mongoClient.connect(connectionString).then(connectionObject => {
-        var database = connectionObject.db("vidlab");
-        database.collection("tblusers").find({ UserId: req.params.userid }).toArray().then(documents => {
-            res.send(documents);
-            res.end();
-        });
-    });
-});
-
-// Get Category Id based on his Specific ID
-app.get("/get-categories/:id", (req, res) => {
-    mongoClient.connect(connectionString).then(connectionObject => {
-        var database = connectionObject.db("vidlab");
-        database.collection("tblcategories").find({ CategoryId: parseInt(req.params.id) }).toArray().then(documents => {
-            res.send(documents);
-            res.end();
-        });
-    });
-});
-
-// Get Video Based on Video ID
-app.get("/get-videos/:id", (req, res) => {
-    mongoClient.connect(connectionString).then(connectionObject => {
-        var database = connectionObject.db("vidlab");
-        database.collection("tblvideos").find({ VideoId: parseInt(req.params.id) }).toArray().then(documents => {
-            res.send(documents);
-            res.end();
-        });
-    });
-});
-
-// Filtering Videos by Category
-app.get("/filter-videos/:categoryid", (req, res) => {
-    mongoClient.connect(connectionString).then(connectionObject => {
-        var database = connectionObject.db("vidlab");
-        database.collection("tblvideos").find({ CategoryId: parseInt(req.params.categoryid) }).toArray().then(documents => {
-            res.send(documents);
-            res.end();
-        });
-    });
-});
-
-// 🔍 Hybrid Search: category / channel / title
-app.get("/search-videos/:term", async (req, res) => {
-    const raw = String(req.params.term || "").trim();
-    if (!raw) return res.json([]);
-
+// Get all users
+app.get("/get-users", async (req, res) => {
     try {
-        const connectionObject = await mongoClient.connect(connectionString);
-        const db = connectionObject.db("vidlab");
-        const videosCol = db.collection("tblvideos");
-
-        const regex = new RegExp(raw, "i");   //Case-insensitive partial match
-
-        // Match ANY of title / Category/ channel
-
-        const results = await videosCol.find({
-            $or: [
-                { Title: regex },
-                { CategoryName: regex },
-                { ChannelName: regex }
-            ]
-        }).toArray();
-
-
-        await connectionObject.close();
-
-        res.json(results);
+        const users = await User.find().exec();
+        res.json(users);
     } catch (err) {
-        console.error("search-videos error:", err);
+        console.error("Error fetching users:", err);
+        res.status(500).json({ message: "Server error" });
+    }
+});
+
+// Get user by UserId
+app.get("/get-users/:userid", async (req, res) => {
+    try {
+        const userId = Number(req.params.userid);
+        const user = await User.findOne({ UserId: userId }).exec();
+        if (!user) {
+            return res.status(404).json({ message: "User not found." });
+        }
+        res.json(user);
+    } catch (err) {
+        console.error("Error fetching user by ID:", err);
+        res.status(500).json({ message: "Server error" });
+    }
+});
+
+// Videos Liked by user
+app.get("/users/:id/liked-videos", async (req, res) => {
+    try {
+        const userId = Number(req.params.id);
+        const reactions = await Reaction.find({ userId, reaction: "like" }).exec();
+        const videoIds = reactions.map(r => r.videoId);
+        const videos = await Video.find({ VideoId: { $in: videoIds } }).exec();
+        res.json(videos);
+    } catch (err) {
+        console.error("Error fetching liked videos:", err);
         res.status(500).json({ message: "Server error" });
     }
 });
 
 
-// User Can Register
-app.post("/register-user", (req, res) => {
-    mongoClient.connect(connectionString).then(connectionObject => {
-        var database = connectionObject.db("vidlab");
+/*===================== CATEGORY ROUTES =============================*/
 
-        var user = {
-            UserId: req.body.UserId,
-            UserName: req.body.UserName,
-            Password: req.body.Password,
-            Email: req.body.Email,
-            Mobile: req.body.Mobile
-        };
-
-        database.collection("tblusers").insertOne(user).then(() => {
-            console.log(`User Registered`);
-            res.end();
-        });
-    });
-});
-
-// Add Category
+// Add category
 app.post("/add-category", async (req, res) => {
-    const connectionObject = await mongoClient.connect(connectionString);
-    const db = connectionObject.db("vidlab");
-
     try {
         const name = String(req.body.CategoryName || "").trim();
         if (!name) {
             return res.status(400).json({ message: "Category name is required." });
         }
-
-        // 🔹 Case-insensitive check for duplicate name
-        const exists = await db.collection("tblcategories").findOne(
-            { CategoryName: name },
-            { collation: { locale: "en", strength: 2 } } // strength:2 = case-insensitive
-        );
-
+        // Case-insensitive check for duplicate name
+        const exists = await Category.findOne({ CategoryName: name })
+            .collation({ locale: 'en', strength: 2 })
+            .exec();
         if (exists) {
             return res.status(409).json({ message: "Category name already exists." });
         }
-
-        // 🔹 Auto-generate next CategoryId
-        const last = await db.collection("tblcategories")
-            .find({})
-            .sort({ CategoryId: -1 })
-            .limit(1)
-            .toArray();
-        const newId = last.length ? (Number(last[0].CategoryId) + 1) : 1;
-
-        const category = { CategoryId: newId, CategoryName: name };
-        await db.collection("tblcategories").insertOne(category);
-
-        res.status(201).json(category);
+        // Auto-generate CategoryId
+        const lastCat = await Category.findOne().sort({ CategoryId: -1 }).exec();
+        const newId = lastCat ? lastCat.CategoryId + 1 : 1;
+        const newCategory = new Category({ CategoryId: newId, CategoryName: name });
+        await newCategory.save();
+        res.status(201).json(newCategory);
     } catch (err) {
-        console.error("add-category error:", err);
+        console.error("Error adding category:", err);
         res.status(500).json({ message: "Server error" });
-    } finally {
-        await connectionObject.close();
+    }
+});
+
+// Get Categories
+app.get("/get-categories", async (req, res) => {
+    try {
+        const categories = await Category.find().exec();
+        res.json(categories);
+    } catch (err) {
+        console.error("Error fetching categories:", err);
+        res.status(500).json({ message: "Server error" });
+    }
+});
+
+// Get Category by Id
+app.get("/get-categories/:id", async (req, res) => {
+    try {
+        const categoryId = Number(req.params.id);
+        const category = await Category.findOne({ CategoryId: categoryId }).exec();
+        if (!category) {
+            return res.status(404).json({ message: "Category not found." });
+        }
+        res.json(category);
+    } catch (err) {
+        console.error("Error fetching category by ID:", err);
+        res.status(500).json({ message: "Server error" });
+    }
+});
+
+// Edit category
+app.put("/edit-category/:id", async (req, res) => {
+    try {
+        const categoryId = Number(req.params.id);
+        const name = String(req.body.CategoryName || "").trim();
+        if (!name) {
+            return res.status(400).json({ message: "Category name is required." });
+        }
+        const exists = await Category.findOne({ CategoryName: name })
+            .collation({ locale: 'en', strength: 2 })
+            .exec();
+        if (exists && exists.CategoryId !== categoryId) {
+            return res.status(409).json({ message: "Category name already exists." });
+        }
+        const result = await Category.updateOne(
+            { CategoryId: categoryId },
+            { CategoryName: name }
+        ).exec();
+        if (result.matchedCount === 0) {
+            return res.status(404).json({ message: "Category not found." });
+        }
+        res.status(200).json({ CategoryId: categoryId, CategoryName: name });
+    } catch (err) {
+        console.error("Error editing category:", err);
+        res.status(500).json({ message: "Server error" });
+    }
+});
+
+// Delete category
+app.delete("/delete-category/:id", async (req, res) => {
+    try {
+        const categoryId = Number(req.params.id);
+        const result = await Category.deleteOne({ CategoryId: categoryId }).exec();
+        if (result.deletedCount === 0) {
+            return res.status(404).json({ message: "Category not found." });
+        }
+        res.status(200).json({ message: "Category deleted." });
+    } catch (err) {
+        console.error("Error deleting category:", err);
+        res.status(500).json({ message: "Server error" });
     }
 });
 
 
+/*=====================Video routes========================*/
 
-
-
-//  Add Video
-
+// Add new video
 app.post("/add-video", async (req, res) => {
-    const connectionObject = await mongoClient.connect(connectionString);
-    const db = connectionObject.db("vidlab");
-
     try {
-        // auto-generate VideoId
-        const last = await db.collection("tblvideos")
-            .find({})
-            .sort({ VideoId: -1 })
-            .limit(1)
-            .toArray();
-        const newId = last.length ? (Number(last[0].VideoId) + 1) : 1;
-
-        const video = {
+        // Auto-generate VideoId
+        const lastVid = await Video.findOne().sort({ VideoId: -1 }).exec();
+        const newId = lastVid ? lastVid.VideoId + 1 : 1;
+        const videoData = {
             VideoId: newId,
             Title: String(req.body.Title || "").trim(),
             Url: String(req.body.Url || "").trim(),
@@ -244,178 +255,181 @@ app.post("/add-video", async (req, res) => {
             Dislikes: Number(req.body.Dislikes) || 0,
             Views: Number(req.body.Views) || 0,
             Comments: Array.isArray(req.body.Comments) ? req.body.Comments : [],
-            CategoryId: Number(req.body.CategoryId),
+            CategoryId: Number(req.body.CategoryId) || null,
             CategoryName: String(req.body.CategoryName || "").trim(),
             ChannelName: String(req.body.ChannelName || "").trim()
         };
-
-        await db.collection("tblvideos").insertOne(video);
-        res.status(201).json(video);
+        const newVideo = new Video(videoData);
+        await newVideo.save();
+        res.status(201).json(newVideo);
     } catch (err) {
-        console.error("add-video error:", err);
+        console.error("Error adding video:", err);
         res.status(500).json({ message: "Server error" });
-    } finally {
-        await connectionObject.close();
     }
 });
 
-
-
-// Edit Category
-app.put("/edit-category/:id", async (req, res) => {
-    const connectionObject = await mongoClient.connect(connectionString);
-    const db = connectionObject.db("vidlab");
-
+// Get all videos
+app.get("/get-videos", async (req, res) => {
     try {
-        const id = Number(req.params.id);
-        const name = String(req.body.CategoryName || "").trim();
-        if (!name) {
-            return res.status(400).json({ message: "Category name is required." });
-        }
-
-        // 🔹 Check duplicate name (case-insensitive), ignore same record
-        const exists = await db.collection("tblcategories").findOne(
-            { CategoryName: name },
-            { collation: { locale: "en", strength: 2 } }
-        );
-
-        if (exists && Number(exists.CategoryId) !== id) {
-            return res.status(409).json({ message: "Category name already exists." });
-        }
-
-        const result = await db.collection("tblcategories").updateOne(
-            { CategoryId: id },
-            { $set: { CategoryName: name } }
-        );
-
-        if (!result.matchedCount) {
-            return res.status(404).json({ message: "Category not found." });
-        }
-
-        res.status(200).json({ CategoryId: id, CategoryName: name });
+        const videos = await Video.find().exec();
+        res.json(videos);
     } catch (err) {
-        console.error("edit-category error:", err);
+        console.error("Error fetching videos:", err);
         res.status(500).json({ message: "Server error" });
-    } finally {
-        await connectionObject.close();
     }
 });
 
 
-// Edit Video
-app.put("/edit-video/:id", (req, res) => {
-    mongoClient.connect(connectionString).then(connectionObject => {
-        var database = connectionObject.db("vidlab");
+// Get video by VideoId
+app.get("/get-videos/:id", async (req, res) => {
+    try {
+        const videoId = Number(req.params.id);
+        const video = await Video.findOne({ VideoId: videoId }).exec();
+        if (!video) {
+            return res.status(404).json({ message: "Video not found." });
+        }
+        res.json(video);
+    } catch (err) {
+        console.error("Error fetching video by ID:", err);
+        res.status(500).json({ message: "Server error" });
+    }
+});
 
-        var video = {
-            VideoId: parseInt(req.body.VideoId),
+// Edit video
+app.put("/edit-video/:id", async (req, res) => {
+    try {
+        const videoId = Number(req.params.id);
+        const videoData = {
             Title: req.body.Title,
             Url: req.body.Url,
             Description: req.body.Description,
-            Likes: parseInt(req.body.Likes),
-            Dislikes: parseInt(req.body.Dislikes),
-            Views: parseInt(req.body.Views),
-            CategoryId: parseInt(req.body.CategoryId),
-            Comments: [req.body.Comments],
-            ChannelName: req.body.ChannelName || "unknown channel"
+            Likes: Number(req.body.Likes) || 0,
+            Dislikes: Number(req.body.Dislikes) || 0,
+            Views: Number(req.body.Views) || 0,
+            Comments: Array.isArray(req.body.Comments)
+                ? req.body.Comments
+                : req.body.Comments
+                    ? [req.body.Comments]
+                    : [],
+            CategoryId: Number(req.body.CategoryId) || null,
+            CategoryName: req.body.CategoryName,
+            ChannelName: req.body.ChannelName || ""
         };
-
-        database.collection("tblvideos").updateOne(
-            { VideoId: parseInt(req.params.id) },
-            { $set: video }
-        ).then(() => {
-            console.log(`Video Updated Successfully..`);
-            res.end();
-        });
-    });
+        const result = await Video.updateOne({ VideoId: videoId }, videoData).exec();
+        if (result.matchedCount === 0) {
+            return res.status(404).json({ message: "Video not found." });
+        }
+        res.status(200).json({ message: "Video updated." });
+    } catch (err) {
+        console.error("Error editing video:", err);
+        res.status(500).json({ message: "Server error" });
+    }
 });
 
-// Delete Category
-app.delete("/delete-category/:id", (req, res) => {
-    mongoClient.connect(connectionString).then(connectionObject => {
-        var database = connectionObject.db("vidlab");
-        database.collection("tblcategories").deleteOne({ CategoryId: parseInt(req.params.id) })
-            .then(() => {
-                console.log("Category deleted..");
-                res.end();
-            });
-    });
+// Delete video
+app.delete("/delete-video/:id", async (req, res) => {
+    try {
+        const videoId = Number(req.params.id);
+        const result = await Video.deleteOne({ VideoId: videoId }).exec();
+        if (result.deletedCount === 0) {
+            return res.status(404).json({ message: "Video not found." });
+        }
+        res.status(200).json({ message: "Video deleted." });
+    } catch (err) {
+        console.error("Error deleting video:", err);
+        res.status(500).json({ message: "Server error" });
+    }
 });
 
-// Delete Video
-app.delete("/delete-video/:id", (req, res) => {
-    mongoClient.connect(connectionString).then(connectionObject => {
-        var database = connectionObject.db("vidlab");
-        database.collection("tblvideos").deleteOne({ VideoId: parseInt(req.params.id) })
-            .then(() => {
-                console.log("Video Deleted.");
-                res.end();
-            });
-    });
+// Filtering videos by CategoryId
+app.get("/filter-videos/:categoryid", async (req, res) => {
+    try {
+        const categoryId = Number(req.params.categoryid);
+        const videos = await Video.find({ CategoryId: categoryId }).exec();
+        res.json(videos);
+    } catch (err) {
+        console.error("Error filtering videos:", err);
+        res.status(500).json({ message: "Server error" });
+    }
 });
 
-// ==================== FIXED REACTION APIs ==================== //
+//  Hybrid Search: Title / CategoryName / ChannelName
+app.get("/search-videos/:term", async (req, res) => {
+    const term = String(req.params.term || "").trim();
+    if (!term) {
+        return res.json([]);
+    }
+    try {
+        const regex = new RegExp(term, "i"); // case-insensitive
+        const results = await Video.find({
+            $or: [
+                { Title: regex },
+                { CategoryName: regex },
+                { ChannelName: regex }
+            ]
+        }).exec();
+        res.json(results);
+    } catch (err) {
+        console.error("Error searching videos:", err);
+        res.status(500).json({ message: "Server error" });
+    }
+});
 
-// Toggle reaction (like / dislike)
-app.post("/videos/:id/reaction", (req, res) => {
-    const videoId = parseInt(req.params.id);
-    const { userId, reaction } = req.body; // "like" or "dislike"
-
-    mongoClient.connect(connectionString).then(async (connectionObject) => {
-        const database = connectionObject.db("vidlab");
-        const reactionsCol = database.collection("tblreactions");
-        const videosCol = database.collection("tblvideos");
-
-        const existing = await reactionsCol.findOne({ userId, videoId });
-
+// Toggle reaction (like/dislike) on a video
+app.post("/videos/:id/reaction", async (req, res) => {
+    try {
+        const videoId = Number(req.params.id);
+        const userId = Number(req.body.userId);
+        const reaction = req.body.reaction;
+        if (!["like", "dislike"].includes(reaction)) {
+            return res.status(400).json({ message: "Invalid reaction." });
+        }
+        // Check if reaction exists
+        const existing = await Reaction.findOne({ userId, videoId }).exec();
         let deltaLike = 0, deltaDislike = 0;
-
         if (existing) {
             if (existing.reaction === reaction) {
-                // remove reaction
-                await reactionsCol.deleteOne({ userId, videoId });
+                // Remove existing reaction
+                await Reaction.deleteOne({ userId, videoId }).exec();
                 if (reaction === "like") deltaLike = -1;
                 if (reaction === "dislike") deltaDislike = -1;
             } else {
-                // switch reaction
-                await reactionsCol.updateOne({ userId, videoId }, { $set: { reaction } });
-                if (reaction === "like") { deltaLike = 1; deltaDislike = -1; }
-                if (reaction === "dislike") { deltaDislike = 1; deltaLike = -1; }
+                // Switch reaction
+                await Reaction.updateOne({ userId, videoId }, { reaction }).exec();
+                if (reaction === "like") {
+                    deltaLike = 1;
+                    deltaDislike = -1;
+                }
+                if (reaction === "dislike") {
+                    deltaLike = -1;
+                    deltaDislike = 1;
+                }
             }
         } else {
-            // new reaction
-            await reactionsCol.insertOne({ userId, videoId, reaction });
+            // New reaction
+            const newReaction = new Reaction({ userId, videoId, reaction });
+            await newReaction.save();
             if (reaction === "like") deltaLike = 1;
             if (reaction === "dislike") deltaDislike = 1;
         }
-
-        // update counts in video
-        await videosCol.updateOne(
+        // Update video counts
+        await Video.updateOne(
             { VideoId: videoId },
             { $inc: { Likes: deltaLike, Dislikes: deltaDislike } }
-        );
-
-        const updatedVideo = await videosCol.findOne({ VideoId: videoId });
-        res.send(updatedVideo);
-    });
+        ).exec();
+        const updatedVideo = await Video.findOne({ VideoId: videoId }).exec();
+        res.json(updatedVideo);
+    } catch (err) {
+        console.error("Error toggling reaction:", err);
+        res.status(500).json({ message: "Server error" });
+    }
 });
 
-// Get all liked videos by user
-app.get("/users/:id/liked-videos", (req, res) => {
-    mongoClient.connect(connectionString).then(async (connectionObject) => {
-        const database = connectionObject.db("vidlab");
-        const reactionsCol = database.collection("tblreactions");
-        const videosCol = database.collection("tblvideos");
 
-        const reactions = await reactionsCol.find({ userId: req.params.id, reaction: "like" }).toArray();
-        const videoIds = reactions.map(r => r.videoId);
+/*============================ SERVER =================================*/
 
-        const videos = await videosCol.find({ VideoId: { $in: videoIds } }).toArray();
-        res.send(videos);
-    });
+
+app.listen(PORT, () => {
+    console.log(`Server Started: http://127.0.0.1:${PORT}`);
 });
 
-// ============================SERVER================================= //
-
-app.listen(5050);
-console.log(`Server Started: http://127.0.0.1:5050`);
